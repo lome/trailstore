@@ -32,6 +32,9 @@ dependencies {
     // https://mvnrepository.com/artifact/org.roaringbitmap/RoaringBitmap
     implementation 'org.roaringbitmap:RoaringBitmap:0.9.30'
 
+    //MvStore for Wal implementation
+    implementation 'com.h2database:h2-mvstore:2.1.214'
+
 
 }
 

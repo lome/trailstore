@@ -5,7 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.exceptions.EventReadException;
 import org.lome.trailstore.model.Event;
-import org.lome.trailstore.storage.wal.*;
+import org.lome.trailstore.storage.mvwal.MvWal;
 import org.lome.trailstore.utils.Sequencer;
 
 import java.io.IOException;
@@ -15,6 +15,7 @@ import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,14 +31,12 @@ public class ChunkManager implements AutoCloseable {
     final Path chunkFolder;
 
     MemoryChunk currentMemoryChunk;
-    WalManager walManager;
-
-    long lastTick;
+    MvWal walManager;
 
     public ChunkManager(Path chunkFolder, Path walFolder) throws IOException {
         this.chunkFolder = chunkFolder;
         this.chunkFiles = new LinkedList<>();
-        this.walManager = new WalManager(walFolder);
+        this.walManager = new MvWal(walFolder);
         this.currentMemoryChunk = new MemoryChunk();
         init();
     }
@@ -48,9 +47,7 @@ public class ChunkManager implements AutoCloseable {
         this.filestore = Files.getFileStore(this.chunkFolder);
         Files.list(this.chunkFolder)
                 .filter(this::isChunk)
-                .sorted((p1,p2) -> {
-                    return p1.getFileName().compareTo(p2.getFileName());
-                })
+                .sorted(Comparator.comparing(Path::getFileName))
                 .forEach(child -> {
                     log.debug("Chunk found: {}",child);
                     //Read WALs are frozen.
@@ -59,14 +56,19 @@ public class ChunkManager implements AutoCloseable {
         reloadFromWal();
     }
 
-    private void reloadFromWal(){
+    private int reloadFromWal(){
         log.info("Reloading WAL events");
-        walManager.snapshot(getLastStoredTick(),Sequencer.SHARED.fixedTick(System.currentTimeMillis()))
-                .forEachRemaining(e -> {
+        long lastStored = getLastStoredTick();
+        long nowTick = Sequencer.SHARED.fixedTick(System.currentTimeMillis());
+        walManager.snapshotStream(lastStored,nowTick,false)
+                .filter(e -> e.getId() > lastStored) //Filter first event
+                .forEach(e -> {
                     currentMemoryChunk.append(e);
                     checkPersistence();
                 });
-        log.info("Reloaded {} events from WAL",currentMemoryChunk.size());
+        int reloaded = currentMemoryChunk.size();
+        log.info("Reloaded {} events from WAL",reloaded);
+        return reloaded;
     }
 
     private long getLastStoredTick(){
@@ -101,6 +103,7 @@ public class ChunkManager implements AutoCloseable {
     @SneakyThrows
     public void close(){
         this.currentMemoryChunk.close();
+        this.walManager.close();
     }
 
     public void append(Event event) throws EventAppendException {
@@ -130,13 +133,9 @@ public class ChunkManager implements AutoCloseable {
                 log.error("Error storing chunk file {}",chunkFile,e);
                 throw new EventAppendException("Error storing chunk file");
             }
-            try{
-                log.info("Truncating WAL at {}",info.getLast());
-                walManager.truncate(info.getLast());
-                log.info("WAL truncated at {}",info.getLast());
-            }catch(IOException e){
-                log.error("Error truncating WAL",e);
-            }
+            log.info("Truncating WAL at {}",info.getLast());
+            walManager.truncate(info.getLast());
+            log.info("WAL truncated at {}",info.getLast());
             //Clear Memory chunks
             currentMemoryChunk = new MemoryChunk();
         }
@@ -144,7 +143,8 @@ public class ChunkManager implements AutoCloseable {
 
     public static void main(String[] args) throws IOException {
         ChunkManager appender = new ChunkManager(Path.of("chunks"),Path.of("wals"));
-        IntStream.range(0, 5000000)
+        long start = System.currentTimeMillis();
+        IntStream.range(0, 5000012)
                 .forEach(i -> {
                     try {
                         appender.append(new Event(Sequencer.SHARED.tick(),
@@ -156,6 +156,9 @@ public class ChunkManager implements AutoCloseable {
                         throw new RuntimeException(e);
                     }
                 });
+        double elasped = (System.currentTimeMillis()-start)/1000.0;
+        System.out.println("Write Perf: "+(5000000/elasped)+" ev/sec");
+        appender.close();
     }
 
 

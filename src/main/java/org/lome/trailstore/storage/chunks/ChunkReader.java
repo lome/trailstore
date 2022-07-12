@@ -34,7 +34,8 @@ public interface ChunkReader extends Closeable,AutoCloseable {
         ChunkInfo info = ChunkInfo.builder()
                 .elements(0)
                 .first(Long.MAX_VALUE)
-                .last(Long.MIN_VALUE).build();
+                .last(Long.MIN_VALUE)
+                .build();
         eventStream()
                 .map(e -> e.getId())
                 .forEach(id -> {
