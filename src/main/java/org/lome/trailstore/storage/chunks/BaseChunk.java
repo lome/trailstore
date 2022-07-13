@@ -5,6 +5,7 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowFileReader;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.types.Types;
 import org.apache.arrow.vector.types.pojo.ArrowType;
@@ -12,20 +13,17 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
+import java.io.*;
 import java.util.Arrays;
 
-public class BaseChunk {
+public class BaseChunk implements AutoCloseable, Closeable {
 
     final BigIntVector idVector;
     final VarBinaryVector keyVector;
     final VarBinaryVector metadataVector;
     final VarBinaryVector dataVector;
     final VectorSchemaRoot schemaRoot;
-    final RootAllocator rootAllocator;
+    final private RootAllocator rootAllocator;
 
     final ArrowStreamReader reader;
     final FileInputStream fileInputStream;
@@ -34,11 +32,11 @@ public class BaseChunk {
         this(new RootAllocator());
     }
 
-    public BaseChunk(RootAllocator allocator) {
+    private BaseChunk(RootAllocator allocator) {
         this(allocator,VectorSchemaRoot.create(arrowSchema(), allocator));
     }
 
-    public BaseChunk(RootAllocator allocator, VectorSchemaRoot sourceSchemaRoot) {
+    private BaseChunk(RootAllocator allocator, VectorSchemaRoot sourceSchemaRoot) {
         rootAllocator = allocator;
         schemaRoot = sourceSchemaRoot;
         idVector = ((BigIntVector) schemaRoot.getVector("id"));
@@ -73,4 +71,17 @@ public class BaseChunk {
         ),null);
     }
 
+    @Override
+    public void close() throws IOException {
+        if (this.fileInputStream != null)
+        this.fileInputStream.close();
+        if (this.reader != null)
+        this.reader.close(true);
+        this.idVector.close();
+        this.keyVector.close();
+        this.dataVector.close();
+        this.metadataVector.close();
+        this.schemaRoot.close();
+        this.rootAllocator.close();
+    }
 }

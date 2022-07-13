@@ -39,70 +39,75 @@ public class ChunkFileReader
     }
 
     public Stream<EventAccessor> eventStream() throws ChunkClosedException {
-        if (closed.getAndSet(true)){
+        if (closed.get()){
             throw new ChunkClosedException();
         }
-        final ChunkFileReader chunkReader = this;
         Iterable<EventAccessor> eventSupplier = new Iterable<EventAccessor>() {
+            @Override
+            @SneakyThrows
+            public Iterator<EventAccessor> iterator() {
+                return eventIterator();
+            }
+        };
+
+        return StreamSupport.stream(eventSupplier.spliterator(), false);
+    }
+
+    @Override
+    public Iterator<EventAccessor> eventIterator() throws ChunkClosedException {
+        final ChunkFileReader chunkReader = this;
+        return new Iterator<EventAccessor>() {
 
             int currentBatchSize = -1;
             int currentBatchIndex = -1;
 
             @Override
-            public Iterator<EventAccessor> iterator() {
-                return new Iterator<EventAccessor>() {
-                    @Override
-                    public boolean hasNext() {
-                        if (currentBatchSize == currentBatchIndex){
-                            try {
-                                if (!reader.loadNextBatch()){
-                                    reader.close(true);
-                                    fileInputStream.close();
-                                    return false;
-                                }
-                            } catch (IOException e) {
-                                e.printStackTrace();
-                                throw new RuntimeException(e);
-                            }
-                            currentBatchSize = schemaRoot.getRowCount();
-                            currentBatchIndex = 0;
+            public boolean hasNext() {
+                if (currentBatchSize == currentBatchIndex){
+                    try {
+                        if (!reader.loadNextBatch()){
+                            chunkReader.close();
+                            return false;
                         }
-                        //Empty Batches ?
-                        return currentBatchIndex < currentBatchSize ? true : hasNext();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        throw new RuntimeException(e);
+                    }
+                    currentBatchSize = schemaRoot.getRowCount();
+                    currentBatchIndex = 0;
+                }
+                //Empty Batches ?
+                return currentBatchIndex < currentBatchSize ? true : hasNext();
+            }
+
+            @Override
+            public EventAccessor next() {
+                final int aidx = currentBatchIndex;
+                EventAccessor ev = new EventAccessor() {
+                    @Override
+                    public long getId() {
+                        return chunkReader.getId(aidx);
                     }
 
                     @Override
-                    public EventAccessor next() {
-                        final int aidx = currentBatchIndex;
-                        EventAccessor ev = new EventAccessor() {
-                            @Override
-                            public long getId() {
-                                return chunkReader.getId(aidx);
-                            }
+                    public byte[] getKey() {
+                        return chunkReader.getKey(aidx);
+                    }
 
-                            @Override
-                            public byte[] getKey() {
-                                return chunkReader.getKey(aidx);
-                            }
+                    @Override
+                    public byte[] getMetadata() {
+                        return chunkReader.getMetadata(aidx);
+                    }
 
-                            @Override
-                            public byte[] getMetadata() {
-                                return chunkReader.getMetadata(aidx);
-                            }
-
-                            @Override
-                            public byte[] getData() {
-                                return chunkReader.getData(aidx);
-                            }
-                        };
-                        currentBatchIndex++;
-                        return ev;
+                    @Override
+                    public byte[] getData() {
+                        return chunkReader.getData(aidx);
                     }
                 };
+                currentBatchIndex++;
+                return ev;
             }
         };
-
-        return StreamSupport.stream(eventSupplier.spliterator(), false);
     }
 
     @Override
@@ -118,7 +123,24 @@ public class ChunkFileReader
     @Override
     public void close() throws IOException {
         closed.set(true);
-        fileInputStream.close();
-        rootAllocator.close();
+        super.close();
+    }
+
+    @Override
+    public ChunkInfo info() throws ChunkClosedException {
+        {
+            ChunkInfo info = ChunkInfo.builder()
+                    .elements(0)
+                    .first(Long.MAX_VALUE)
+                    .last(Long.MIN_VALUE)
+                    .build();
+            idStream()
+                    .forEach(id -> {
+                        info.elements++;
+                        info.first = Math.min(info.first,id);
+                        info.last = Math.max(info.last,id);
+                    });
+            return info;
+        }
     }
 }

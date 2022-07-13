@@ -58,36 +58,47 @@ public class FsWatcher implements AutoCloseable, Closeable {
         WatchKey key;
         while (keepWatching.get()) {
             try {
-                if ((key = watchService.poll(100, TimeUnit.MILLISECONDS)) == null) break;
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-                continue;
-            }
-            for (WatchEvent<?> event : key.pollEvents()) {
-                switch(event.kind().name()){
-                    case "ENTRY_CREATE": {
-                        Path target = (Path)event.context();
-                        log.trace("File created: {}",target);
-                        addToMirror(target);
-                    };break;
-                    case "ENTRY_DELETE": {
-                        Path target = (Path)event.context();
-                        log.trace("File removed: {}",target);
-                        removedFromMirror(target);
-                    };break;
-                    case "ENTRY_MODIFY": {
-                        Path target = (Path)event.context();
-                        log.trace("File updated: {}",target);
-                        addToMirror(target);
-                    };break;
-                    case "OVERFLOW": {
-                        log.warn("Fs Events Overflow!");
-                        initMap();
-                    }
-                    default: log.error("Unknown Event Kind: {}",event.kind());
+                try {
+                    if ((key = watchService.poll(100, TimeUnit.MILLISECONDS)) == null) continue;
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                    continue;
                 }
+                for (WatchEvent<?> event : key.pollEvents()) {
+                    switch (event.kind().name()) {
+                        case "ENTRY_CREATE": {
+                            Path target = this.watchPath.resolve((Path) event.context());
+                            log.info("File created: {}", target);
+                            addToMirror(target);
+                        }
+                        ;
+                        break;
+                        case "ENTRY_DELETE": {
+                            Path target = this.watchPath.resolve((Path) event.context());
+                            log.info("File removed: {}", target);
+                            removedFromMirror(target);
+                        }
+                        ;
+                        break;
+                        case "ENTRY_MODIFY": {
+                            Path target = this.watchPath.resolve((Path) event.context());
+                            log.trace("File updated: {}", target);
+                            addToMirror(target);
+                        }
+                        ;
+                        break;
+                        case "OVERFLOW": {
+                            log.warn("Fs Events Overflow!");
+                            initMap();
+                        }
+                        default:
+                            log.error("Unknown Event Kind: {}", event.kind());
+                    }
+                }
+                key.reset();
+            }catch(Exception e){
+                e.printStackTrace();
             }
-            key.reset();
         }
     }
 

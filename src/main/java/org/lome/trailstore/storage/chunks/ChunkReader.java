@@ -4,11 +4,13 @@ import org.lome.trailstore.model.Event;
 import org.roaringbitmap.longlong.Roaring64Bitmap;
 
 import java.io.Closeable;
+import java.util.Iterator;
 import java.util.stream.Stream;
 
 public interface ChunkReader extends Closeable,AutoCloseable {
 
     Stream<EventAccessor> eventStream() throws ChunkClosedException;
+    Iterator<EventAccessor> eventIterator() throws ChunkClosedException;
     Stream<Long> idStream() throws ChunkClosedException;
     boolean isClosed();
 
@@ -37,20 +39,7 @@ public interface ChunkReader extends Closeable,AutoCloseable {
                 .map(ea -> new Event(ea.getId(),ea.getKey(),ea.getMetadata(),ea.getData()));
     }
 
-    default ChunkInfo info() throws ChunkClosedException {
-        ChunkInfo info = ChunkInfo.builder()
-                .elements(0)
-                .first(Long.MAX_VALUE)
-                .last(Long.MIN_VALUE)
-                .build();
-        idStream()
-                .forEach(id -> {
-                    info.elements++;
-                    info.first = Math.min(info.first,id);
-                    info.last = Math.max(info.last,id);
-                });
-        return info;
-    }
+    ChunkInfo info() throws ChunkClosedException;
 
 
 }
