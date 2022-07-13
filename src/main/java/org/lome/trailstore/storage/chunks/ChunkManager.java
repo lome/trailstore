@@ -1,13 +1,17 @@
 package org.lome.trailstore.storage.chunks;
 
+import com.google.common.cache.*;
+import lombok.Getter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.exceptions.EventReadException;
 import org.lome.trailstore.model.Event;
 import org.lome.trailstore.storage.mvwal.MvWal;
+import org.lome.trailstore.storage.utils.FsWatcher;
 import org.lome.trailstore.utils.Sequencer;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -17,43 +21,78 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.LinkedList;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 @Slf4j
-public class ChunkManager implements AutoCloseable {
+public class ChunkManager implements AutoCloseable, Closeable {
 
     final static long MAX_MEMORY_EVENTS = 1000000L; //1M events in memory
+    final static String CHUNK_PATTERN = "^[0-9]+\\.CHUNK";
 
-    LinkedList<Path> chunkFiles;
-    FileStore filestore;
+    final FsWatcher fsWatcher;
     final Path chunkFolder;
 
+    final LoadingCache<Path,Chunker> chunkReaders;
+    final ScheduledExecutorService storageExecutor = Executors.newSingleThreadScheduledExecutor();
+    final MvWal walManager;
+
     MemoryChunk currentMemoryChunk;
-    MvWal walManager;
+    // Swap Utils
+    Future<?> lastSwapFuture;
+
 
     public ChunkManager(Path chunkFolder, Path walFolder) throws IOException {
         this.chunkFolder = chunkFolder;
-        this.chunkFiles = new LinkedList<>();
+        Files.createDirectories(this.chunkFolder);
+        this.fsWatcher = new FsWatcher(chunkFolder, (p) -> Files.isRegularFile(p) &&
+                p.getFileName().toString().toUpperCase().matches(CHUNK_PATTERN));
         this.walManager = new MvWal(walFolder);
         this.currentMemoryChunk = new MemoryChunk();
-        init();
+        this.chunkReaders = CacheBuilder.newBuilder()
+                .maximumSize(50)
+                .expireAfterAccess(6L, TimeUnit.HOURS)
+                .removalListener(new RemovalListener<Path, Chunker>() {
+                    @Override
+                    public void onRemoval(RemovalNotification<Path, Chunker> notification) {
+                        try {
+                            notification.getValue().getReader().close();
+                        } catch (IOException e) {
+                            log.error("Error closing {}",notification.getKey(),e);
+                        }
+                    }
+                })
+                .build(new CacheLoader<Path, Chunker>() {
+                    @Override
+                    public Chunker load(Path key) throws Exception {
+                        return new Chunker(key);
+                    }
+                });
+
+        //Reload missing items from WAL
+        reloadFromWal();
     }
 
-    @SneakyThrows
-    private void init(){
-        Files.createDirectories(this.chunkFolder);
-        this.filestore = Files.getFileStore(this.chunkFolder);
-        Files.list(this.chunkFolder)
-                .filter(this::isChunk)
-                .sorted(Comparator.comparing(Path::getFileName))
-                .forEach(child -> {
-                    log.debug("Chunk found: {}",child);
-                    //Read WALs are frozen.
-                    chunkFiles.add(child);
-                });
-        reloadFromWal();
+    @Getter
+    public static class Chunker{
+        final ChunkInfo info;
+        final ChunkReader reader;
+        final Path chunkPath;
+        Chunker(Path chunkPath) throws IOException, ChunkClosedException {
+            this.chunkPath = chunkPath;
+            this.reader = new ChunkFileReader(chunkPath.toFile());
+            this.info = this.reader.info();
+        }
+        boolean isValid(){
+            return Files.exists(this.chunkPath)
+                    && Files.isRegularFile(this.chunkPath)
+                    && Files.isReadable(this.chunkPath)
+                    && !reader.isClosed();
+        }
     }
 
     private int reloadFromWal(){
@@ -64,35 +103,33 @@ public class ChunkManager implements AutoCloseable {
                 .filter(e -> e.getId() > lastStored) //Filter first event
                 .forEach(e -> {
                     currentMemoryChunk.append(e);
-                    checkPersistence();
+                    try {
+                        checkSwap();
+                    } catch (Exception ex) {
+                        log.error("Error during WAL reload",e);
+                    }
                 });
         int reloaded = currentMemoryChunk.size();
         log.info("Reloaded {} events from WAL",reloaded);
         return reloaded;
     }
 
-    private long getLastStoredTick(){
-        if (this.chunkFiles.isEmpty()) return 0;
-        return this.chunkFiles.stream()
-                .map(Path::toFile)
-                .map(file -> {
+    private Stream<Chunker> storedChunks(boolean reverse){
+        return fsWatcher.folderContent(reverse)
+                .map(p -> {
                     try {
-                        return new ChunkFileReader(file);
-                    } catch (IOException e) {
-                       log.error("Error opening file {}",file,e);
-                       return null;
-                    }
-                }).filter(Objects::nonNull)
-                .map(r -> {
-                    try {
-                        return r.info();
-                    } catch (ChunkClosedException e) {
-                        log.error("Error getting info for reader",e);
+                        return this.chunkReaders.get(p);
+                    } catch (ExecutionException e) {
+                        log.error("Error loading Chunker from {}",p,e);
                         return null;
                     }
-                }).filter(Objects::nonNull)
-                .mapToLong(ChunkInfo::getLast)
-                .max().getAsLong();
+                }).filter(c -> c != null && c.isValid());
+    }
+
+    private long getLastStoredTick(){
+        return storedChunks(true)
+                .mapToLong(c -> c.getInfo().getLast())
+                .findFirst().orElse(0);
     }
 
 
@@ -104,41 +141,72 @@ public class ChunkManager implements AutoCloseable {
     public void close(){
         this.currentMemoryChunk.close();
         this.walManager.close();
+        this.storageExecutor.shutdown();
+        this.fsWatcher.close();
     }
 
-    public void append(Event event) throws EventAppendException {
+    public synchronized void append(Event event) throws EventAppendException {
         walManager.append(event);
         currentMemoryChunk.append(event);
-        checkPersistence();
+        try {
+            checkSwap();
+        } catch (Exception e) {
+            throw new EventAppendException(e);
+        }
     }
 
-    @SneakyThrows
-    private void checkPersistence() {
+    private void checkSwap() throws IOException, ExecutionException, InterruptedException {
         //Check size && Roll if needed
         if (currentMemoryChunk.size() >= MAX_MEMORY_EVENTS){
-            ChunkInfo info = currentMemoryChunk.info();
+            // Am I still saving the old swapMemChunk ?\
+            if (this.lastSwapFuture != null && !this.lastSwapFuture.isDone()){
+                //Wait for it!
+                this.lastSwapFuture.get();
+            }
+            MemoryChunk swapMemoryChunk = currentMemoryChunk;
+            currentMemoryChunk = new MemoryChunk();
+            this.lastSwapFuture = storeChunk(swapMemoryChunk);
+        }
+    }
+
+    private Future<?> storeChunk(final MemoryChunk chunk){
+        return storageExecutor.submit(() -> {
+            ChunkInfo info = null;
+            try {
+                info = chunk.info();
+            } catch (ChunkClosedException e) {
+                log.error("Storing a closed chunk!");
+            }
             long first = info.getFirst();
             Path chunkFile = Path.of(chunkFolder.toString(),String.format("%d.chunk",first));
             while (Files.exists(chunkFile)){
-                log.error("File {} already exists.. something's wrong here!");
+                log.error("File {} already exists.. something's wrong here!",chunkFile);
                 first++;
                 chunkFile = Path.of(chunkFolder.toString(),String.format("%d.chunk",first));
             }
             log.info("Storing memory chunk as {}",chunkFile);
             try {
-                currentMemoryChunk.store(chunkFile.toFile());
+                chunk.store(chunkFile.toFile());
                 log.info("Stored memory chunk as {}",chunkFile);
-                chunkFiles.add(chunkFile);
             }catch(IOException e){
                 log.error("Error storing chunk file {}",chunkFile,e);
+                try{
+                    Files.delete(chunkFile);
+                }catch (Exception de){
+                    //Ignore
+                }
                 throw new EventAppendException("Error storing chunk file");
+            }finally {
+                try {
+                    chunk.close();
+                } catch (IOException e) {
+                    log.error("Error closing Chunk",e);
+                }
             }
-            log.info("Truncating WAL at {}",info.getLast());
-            walManager.truncate(info.getLast());
-            log.info("WAL truncated at {}",info.getLast());
-            //Clear Memory chunks
-            currentMemoryChunk = new MemoryChunk();
-        }
+            log.info("Removing WAL entries {}/{}",info.getFirst(),info.getLast());
+            walManager.remove(info.getFirst(),info.getLast());
+            log.info("Removed WAL entries {}/{}",info.getFirst(),info.getLast());
+        });
     }
 
     public static void main(String[] args) throws IOException {
@@ -156,8 +224,8 @@ public class ChunkManager implements AutoCloseable {
                         throw new RuntimeException(e);
                     }
                 });
-        double elasped = (System.currentTimeMillis()-start)/1000.0;
-        System.out.println("Write Perf: "+(5000000/elasped)+" ev/sec");
+        double elapsed = (System.currentTimeMillis()-start)/1000.0;
+        System.out.println("Write Perf: "+(5000000/elapsed)+" ev/sec");
         appender.close();
     }
 

@@ -35,6 +35,10 @@ dependencies {
     //MvStore for Wal implementation
     implementation 'com.h2database:h2-mvstore:2.1.214'
 
+    // https://mvnrepository.com/artifact/com.google.guava/guava
+    implementation 'com.google.guava:guava:31.1-jre'
+
+
 
 }
 

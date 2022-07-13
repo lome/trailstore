@@ -99,6 +99,16 @@ public class MemoryChunk
     }
 
     @Override
+    public Stream<Long> idStream() throws ChunkClosedException {
+        return eventStream().map(e -> e.getId());
+    }
+
+    @Override
+    public boolean isClosed() {
+        return false;
+    }
+
+    @Override
     public void close() throws IOException {
         schemaRoot.clear();
         rootAllocator.close();

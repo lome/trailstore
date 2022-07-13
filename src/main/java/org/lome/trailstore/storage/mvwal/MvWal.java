@@ -158,4 +158,12 @@ public class MvWal implements AutoCloseable, Closeable {
         return snapshotStream(firstKey,lastKey,reverse);
     }
 
+    public void remove(long firstKey, long lastKey) {
+        checkAppendable();
+        commit();
+        this.eventMap.cursor(firstKey,lastKey,false)
+                .forEachRemaining(this.eventMap::remove);
+        commit();
+        this.eventMap.store.compactMoveChunks();
+    }
 }

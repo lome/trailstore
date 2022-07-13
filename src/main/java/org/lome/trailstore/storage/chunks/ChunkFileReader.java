@@ -106,6 +106,16 @@ public class ChunkFileReader
     }
 
     @Override
+    public Stream<Long> idStream() throws ChunkClosedException {
+        return eventStream().map(e -> e.getId());
+    }
+
+    @Override
+    public boolean isClosed() {
+        return closed.get();
+    }
+
+    @Override
     public void close() throws IOException {
         closed.set(true);
         fileInputStream.close();

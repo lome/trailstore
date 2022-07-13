@@ -9,6 +9,8 @@ import java.util.stream.Stream;
 public interface ChunkReader extends Closeable,AutoCloseable {
 
     Stream<EventAccessor> eventStream() throws ChunkClosedException;
+    Stream<Long> idStream() throws ChunkClosedException;
+    boolean isClosed();
 
     default Stream<EventAccessor> eventStream(Roaring64Bitmap ids) throws ChunkClosedException {
         return eventStream()
@@ -25,6 +27,11 @@ public interface ChunkReader extends Closeable,AutoCloseable {
         return bitmap;
     }
 
+    default Stream<EventAccessor> eventStream(EventFilter filter) throws ChunkClosedException {
+        return eventStream()
+                .filter(filter::filter);
+    }
+
     default Stream<Event> readEvents() throws ChunkClosedException {
         return eventStream()
                 .map(ea -> new Event(ea.getId(),ea.getKey(),ea.getMetadata(),ea.getData()));
@@ -36,8 +43,7 @@ public interface ChunkReader extends Closeable,AutoCloseable {
                 .first(Long.MAX_VALUE)
                 .last(Long.MIN_VALUE)
                 .build();
-        eventStream()
-                .map(e -> e.getId())
+        idStream()
                 .forEach(id -> {
                     info.elements++;
                     info.first = Math.min(info.first,id);
