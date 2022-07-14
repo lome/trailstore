@@ -3,7 +3,9 @@ package org.lome.trailstore.storage.chunks;
 import com.google.common.hash.BloomFilter;
 import com.google.common.hash.Funnels;
 import lombok.extern.slf4j.Slf4j;
+import org.roaringbitmap.longlong.Roaring64Bitmap;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.List;
 
@@ -11,7 +13,7 @@ import java.util.List;
 public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
 
     final ChunkManager chunkManager;
-    final BloomFilter<Long> bloom;
+    final Roaring64Bitmap bloom;
     transient long currentChunkFirst = 0L;
     transient ChunkReader currentReader;
     transient Iterator<EventAccessor> currentIterator;
@@ -20,11 +22,7 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
 
     protected ChunkManagerEventsIterator(final ChunkManager manager){
         this.chunkManager = manager;
-        this.bloom = BloomFilter.create(
-                Funnels.longFunnel(),
-                10000000L,
-                0.001
-        );
+        this.bloom = new Roaring64Bitmap();
         nextReader();
     }
 
@@ -33,21 +31,21 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
         while(_hasNext()){
             this.next = currentIterator.next();
             long nextId = this.next.getId();
-            if (!bloom.mightContain(nextId)){
-                bloom.put(nextId);
+            if (!bloom.contains(nextId)){
+                bloom.add(nextId);
                 return true;
             }
-            log.warn("Bloom found dup! {}",this.next.getId());
+            //log.warn("Bloom found dup! {}",this.next.getId());
         }
         return false;
     }
 
     boolean _hasNext(){
-        if (currentReader.isClosed()){
+        if (currentReader.isClosed() || !currentIterator.hasNext()){
             if (nextReader()) return _hasNext();
             else return false;
         }else{
-            return currentIterator.hasNext();
+            return true;
         }
     }
 
@@ -58,18 +56,18 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
 
     private boolean nextReader() {
         // Look through stored chunks
-        ChunkReader stored = chunkManager.storedChunksSet()
+        ChunkManager.Chunker stored = chunkManager.storedChunksSet()
                 .stream().filter(c -> c.getInfo().getFirst() > this.currentChunkFirst)
                 .filter(c -> c.isValid())
                 .findFirst()
-                .map(c -> c.getReader())
                 .orElse(null);
         if (stored != null){
             try {
-                log.info("Moving reader to {}",stored.info().getFirst());
-                currentChunkFirst = stored.info().getFirst();
-                currentIterator = stored.eventIterator();
-                currentReader = stored;
+                log.info("Moving reader to [Stored Chunk] {}",stored.getInfo().getFirst());
+                currentChunkFirst = stored.getInfo().getFirst();
+                ChunkReader reader = stored.reader();
+                currentIterator = reader.eventIterator();
+                currentReader = reader;
                 return true;
             } catch (ChunkClosedException e) {
                 throw new RuntimeException(e);
@@ -95,6 +93,7 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
                 }).findFirst().orElse(null);
         if (storingChunk != null){
             try {
+                log.info("Moving reader [Storing Chunk] to {}",storingChunk.info().getFirst());
                 currentChunkFirst = storingChunk.info().getFirst();
                 currentIterator = storingChunk.eventIterator();
                 currentReader = storingChunk;
@@ -108,6 +107,7 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
         try {
             if (live != null && live.info().getFirst() > this.currentChunkFirst){
                 try {
+                    log.info("Moving reader [LIVE] to {}",live.info().getFirst());
                     currentChunkFirst = live.info().getFirst();
                     currentIterator = live.eventIterator();
                     currentReader = live;
@@ -119,6 +119,7 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
         } catch (ChunkClosedException e) {
             throw new RuntimeException(e);
         }
+        log.info("No more readers available");
 
         return false;
     }

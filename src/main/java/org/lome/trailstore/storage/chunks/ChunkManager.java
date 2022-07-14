@@ -56,16 +56,6 @@ public class ChunkManager implements AutoCloseable, Closeable, ChunkReader {
         this.chunkReaders = CacheBuilder.newBuilder()
                 .maximumSize(50)
                 .expireAfterAccess(6L, TimeUnit.HOURS)
-                .removalListener(new RemovalListener<Path, Chunker>() {
-                    @Override
-                    public void onRemoval(RemovalNotification<Path, Chunker> notification) {
-                        try {
-                            notification.getValue().getReader().close();
-                        } catch (IOException e) {
-                            log.error("Error closing {}",notification.getKey(),e);
-                        }
-                    }
-                })
                 .build(new CacheLoader<Path, Chunker>() {
                     @Override
                     public Chunker load(Path key) throws Exception {
@@ -127,24 +117,27 @@ public class ChunkManager implements AutoCloseable, Closeable, ChunkReader {
     @Getter
     public static class Chunker implements Comparable<Chunker>{
         final ChunkInfo info;
-        final ChunkReader reader;
         final Path chunkPath;
         Chunker(Path chunkPath) throws IOException, ChunkClosedException {
             this.chunkPath = chunkPath;
-            this.reader = new ChunkFileReader(chunkPath.toFile());
-            this.info = this.reader.info();
+            ChunkReader reader = new ChunkFileReader(chunkPath.toFile());
+            this.info = reader.info();
         }
         boolean isValid(){
             return Files.exists(this.chunkPath)
                     && Files.isRegularFile(this.chunkPath)
-                    && Files.isReadable(this.chunkPath)
-                    && !reader.isClosed();
+                    && Files.isReadable(this.chunkPath);
         }
 
         @Override
         public int compareTo(Chunker chunker) {
             return this.chunkPath.getFileName().toString()
                     .compareTo(chunker.getChunkPath().getFileName().toString());
+        }
+
+        @SneakyThrows
+        public ChunkReader reader(){
+            return new ChunkFileReader(this.chunkPath.toFile());
         }
     }
 
