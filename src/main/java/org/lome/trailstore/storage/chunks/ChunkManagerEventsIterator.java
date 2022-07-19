@@ -41,6 +41,7 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
     }
 
     boolean _hasNext(){
+        if (currentReader == null || currentIterator == null) return false;
         if (currentReader.isClosed() || !currentIterator.hasNext()){
             if (nextReader()) return _hasNext();
             else return false;
@@ -78,25 +79,22 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
         MemoryChunk storingChunk = chunkManager.chunkStoreQueue.stream()
                 .sorted((mc1,mc2) -> {
                     try {
-                        long mf1 = mc1.info().getFirst();
-                        long mf2 = mc2.info().getFirst();
+                        long mf1 = mc1.getFirst().get();
+                        long mf2 = mc2.getFirst().get();
                         return Long.compare(mf1, mf2);
                     }catch(Exception e){
                         throw new RuntimeException(e);
                     }
                 }).filter(c -> {
-                    try {
-                        return c.info().getFirst() > this.currentChunkFirst;
-                    } catch (ChunkClosedException e) {
-                        throw new RuntimeException(e);
-                    }
+                    return c.getFirst().get() > this.currentChunkFirst;
                 }).findFirst().orElse(null);
         if (storingChunk != null){
             try {
-                log.info("Moving reader [Storing Chunk] to {}",storingChunk.info().getFirst());
-                currentChunkFirst = storingChunk.info().getFirst();
-                currentIterator = storingChunk.eventIterator();
-                currentReader = storingChunk;
+                log.info("Moving reader [Storing Chunk] to {}",storingChunk.getFirst().get());
+                ChunkReader reader = storingChunk.reader();
+                currentChunkFirst = reader.info().getFirst();
+                currentIterator = reader.eventIterator();
+                currentReader = reader;
                 return true;
             } catch (ChunkClosedException e) {
                 throw new RuntimeException(e);
@@ -104,20 +102,17 @@ public class ChunkManagerEventsIterator implements Iterator<EventAccessor> {
         }
 
         MemoryChunk live = chunkManager.currentMemoryChunk;
-        try {
-            if (live != null && live.info().getFirst() > this.currentChunkFirst){
-                try {
-                    log.info("Moving reader [LIVE] to {}",live.info().getFirst());
-                    currentChunkFirst = live.info().getFirst();
-                    currentIterator = live.eventIterator();
-                    currentReader = live;
-                    return true;
-                } catch (ChunkClosedException e) {
-                    throw new RuntimeException(e);
-                }
+        if (live != null && live.getFirst().get() > this.currentChunkFirst){
+            try {
+                log.info("Moving reader [LIVE] to {}",live.getFirst().get());
+                ChunkReader reader = live.reader();
+                currentChunkFirst = reader.info().getFirst();
+                currentIterator = reader.eventIterator();
+                currentReader = reader;
+                return true;
+            } catch (ChunkClosedException e) {
+                throw new RuntimeException(e);
             }
-        } catch (ChunkClosedException e) {
-            throw new RuntimeException(e);
         }
         log.info("No more readers available");
 

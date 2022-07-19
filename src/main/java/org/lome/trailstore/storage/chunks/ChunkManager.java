@@ -218,14 +218,8 @@ public class ChunkManager implements AutoCloseable, Closeable, ChunkReader {
     }
 
     private boolean storeChunk(final MemoryChunk chunk){
-        ChunkInfo info = null;
-        try {
-            info = chunk.info();
-        } catch (ChunkClosedException e) {
-            log.error("Storing a closed chunk!");
-            return false;
-        }
-        long first = info.getFirst();
+        long first = chunk.getFirst().get();
+        long last = chunk.getLast().get();
         Path chunkFile = Path.of(chunkFolder.toString(),String.format("%d.chunk",first));
         while (Files.exists(chunkFile)){
             log.error("File {} already exists.. something's wrong here!",chunkFile);
@@ -251,9 +245,9 @@ public class ChunkManager implements AutoCloseable, Closeable, ChunkReader {
                 log.error("Error closing Chunk",e);
             }
         }
-        log.info("Removing WAL entries {}/{}",info.getFirst(),info.getLast());
-        walManager.remove(info.getFirst(),info.getLast());
-        log.info("Removed WAL entries {}/{}",info.getFirst(),info.getLast());
+        log.info("Removing WAL entries {}/{}",first,last);
+        walManager.remove(first,last);
+        log.info("Removed WAL entries {}/{}",first,last);
         return true;
     }
 

@@ -73,15 +73,6 @@ public class BaseChunk implements AutoCloseable, Closeable {
 
     @Override
     public void close() throws IOException {
-        if (this.fileInputStream != null)
-        this.fileInputStream.close();
-        if (this.reader != null)
-        this.reader.close(true);
-        this.idVector.close();
-        this.keyVector.close();
-        this.dataVector.close();
-        this.metadataVector.close();
-        this.schemaRoot.close();
-        this.rootAllocator.close();
+        
     }
 }
