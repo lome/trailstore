@@ -1,4 +1,4 @@
-package org.lome.trailstore.storage.chunks;
+package org.lome.trailstore.storage.segment;
 
 public interface EventFilter{
     boolean filter(EventAccessor eventAccessor);

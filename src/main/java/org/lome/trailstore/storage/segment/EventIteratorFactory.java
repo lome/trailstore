@@ -33,7 +33,7 @@ public class EventIteratorFactory implements Comparable<EventIteratorFactory>{
         return iterator;
     }
 
-    public void reload(ArrowSegment segment){
+    public void swapSource(ArrowSegment segment){
         log.info("Reloading {} with {}",this.segment,segment);
         this.segment = segment;
         iterators.forEach(it -> it.reload(segment));

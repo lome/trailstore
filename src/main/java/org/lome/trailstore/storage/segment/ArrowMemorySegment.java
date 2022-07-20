@@ -15,6 +15,7 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.lome.trailstore.model.Event;
+import org.lome.trailstore.utils.Sequencer;
 
 import java.io.Closeable;
 import java.io.File;
@@ -22,11 +23,15 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
 public class ArrowMemorySegment implements ArrowSegment {
 
     final VectorSchemaRoot vectorSchema;
+    final long starting = Sequencer.SHARED.tick();
+    final Lock accessLock = new ReentrantLock();
 
     public ArrowMemorySegment(VectorSchemaRoot vectorSchema){
         this.vectorSchema = vectorSchema;
@@ -41,26 +46,53 @@ public class ArrowMemorySegment implements ArrowSegment {
     }
 
     public long first(){
-        if (rows() < 1) return -1;
-        return idVector().get(1);
+        accessLock.lock();
+        long first = starting;
+        try {
+            if (rows() > 0) {
+                first = idVector().get(0);
+            }
+        }catch(Exception e){
+            e.printStackTrace();
+        }finally {
+            accessLock.unlock();
+        }
+        return first;
     }
 
     public long last(){
-        if (rows() < 1) return -1;
-        return idVector().get(rows()-1);
+        accessLock.lock();
+        long last = starting;
+        try {
+            if (rows() > 0) {
+                last = idVector().get(rows()-1);
+            }
+        }catch(Exception e){
+            e.printStackTrace();
+        }finally {
+            accessLock.unlock();
+        }
+        return last;
     }
 
-    public synchronized void append(Event event){
-        int index = vectorSchema.getRowCount();
+    public void append(Event event){
+        accessLock.lock();
+        try {
+            int index = vectorSchema.getRowCount();
 
-        // Do Not call allocate new! this seems to cause vector inconsistency
-        //vectorSchema.allocateNew();
+            // Do Not call allocate new! this seems to cause vector inconsistency
+            //vectorSchema.allocateNew();
 
-        idVector().setSafe(index,event.getId());
-        keyVector().setSafe(index,event.getKey());
-        metadataVector().setSafe(index, event.getMetadata());
-        dataVector().setSafe(index, event.getData());
-        vectorSchema.setRowCount(index+1);
+            idVector().setSafe(index, event.getId());
+            keyVector().setSafe(index, event.getKey());
+            metadataVector().setSafe(index, event.getMetadata());
+            dataVector().setSafe(index, event.getData());
+            vectorSchema.setRowCount(index + 1);
+        }catch(Exception e){
+            e.printStackTrace();
+        }finally {
+            accessLock.unlock();
+        }
     }
 
     public EventIterator iterator(){

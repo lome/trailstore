@@ -1,6 +1,5 @@
 package segment;
 
-import chunks.ChunksTest;
 import org.junit.jupiter.api.Test;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.model.Event;
@@ -31,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SegmentTest {
 
-    final static Logger log = LoggerFactory.getLogger(ChunksTest.class);
+    final static Logger log = LoggerFactory.getLogger(SegmentTest.class);
 
     @Test
     public void testSegment() throws IOException {
@@ -139,65 +138,6 @@ public class SegmentTest {
         scheduler.shutdown();
         while(!scheduler.awaitTermination(100, TimeUnit.MILLISECONDS));
         segment.close();
-    }
-
-    @Test
-    public void perfWrite() throws IOException, ChunkClosedException {
-        clear(Path.of("segments"));
-        clear(Path.of("wals"));
-
-        SegmentManager manager = new SegmentManager(Path.of("segments"),Path.of("wals"));
-        Set<Long> idStack = new HashSet<>();
-        long start = System.currentTimeMillis();
-        AtomicInteger counter = new AtomicInteger();
-        IntStream.range(0, 5000012)
-                .forEach(i -> {
-                    try {
-                        long id = Sequencer.SHARED.tick();
-                        idStack.add(id);
-                        manager.append(new Event(id,
-                                "foo".getBytes(StandardCharsets.UTF_8),
-                                "bar".getBytes(StandardCharsets.UTF_8),
-                                "baz".getBytes(StandardCharsets.UTF_8)));
-                        counter.incrementAndGet();
-                    } catch (EventAppendException e) {
-                        e.printStackTrace();
-                        throw new RuntimeException(e);
-                    }
-                });
-        double elapsed = (System.currentTimeMillis()-start)/1000.0;
-        log.info("Write throughput: {} ev/sec",(counter.get()/elapsed));
-        start = System.currentTimeMillis();
-        counter.set(0);
-        manager.iterator()
-                .forEachRemaining(ea -> {
-                    assertEquals(true,idStack.remove(ea.getId()));
-                    counter.incrementAndGet();
-                });
-        manager.close();
-        elapsed = (System.currentTimeMillis()-start)/1000.0;
-        log.info("Read throughput: {} ev/sec",(counter.get()/elapsed));
-
-        log.info("Remaining: {}",idStack);
-        assertEquals(0,idStack.size());
-
-        clear(Path.of("segments"));
-        clear(Path.of("wals"));
-    }
-
-    private void clear(Path rootPath){
-        try (Stream<Path> walk = Files.walk(rootPath)) {
-            walk.sorted(Comparator.reverseOrder())
-                    .filter(p -> !p.equals(rootPath))
-                    .forEach(this::clear);
-        } catch (IOException e) {
-            //throw new RuntimeException(e);
-        }
-        try {
-            Files.delete(rootPath);
-        } catch (IOException e) {
-            //throw new RuntimeException(e);
-        }
     }
 
 }

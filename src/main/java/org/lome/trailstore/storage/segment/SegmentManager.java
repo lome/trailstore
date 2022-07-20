@@ -12,6 +12,7 @@ import org.lome.trailstore.storage.chunks.*;
 import org.lome.trailstore.storage.mvwal.MvWal;
 import org.lome.trailstore.storage.utils.FsWatcher;
 import org.lome.trailstore.utils.Sequencer;
+import org.slf4j.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -74,9 +75,13 @@ public class SegmentManager implements Closeable {
                         if (segment == null) break;
                         ArrowFileSegment fileSegment = storeSegment(segment);
                         if (fileSegment != null){
-                            readerSegments.stream()
-                                    .filter(e -> e.getSegment().equals(segment))
-                                    .findFirst().get().reload(fileSegment);
+                            try {
+                                readerSegments.stream()
+                                        .filter(e -> e.getSegment().equals(segment))
+                                        .findFirst().get().swapSource(fileSegment);
+                            }catch(Exception e){
+                                e.printStackTrace();
+                            }
                         }else{
                             segmentStoreQueue.put(segment);
                         }
@@ -144,19 +149,26 @@ public class SegmentManager implements Closeable {
 
     public Iterator<EventAccessor> iterator(){
         //log.info("Iterator from {} segments", readerSegments.size());
-        if (readerSegments.isEmpty()) return new ArrayList<EventAccessor>().iterator();
+        if (readerSegments.isEmpty()) {
+            log.info("Segments are empty.");
+            return new ArrayList<EventAccessor>().iterator();
+        }
 
         return new Iterator<EventAccessor>() {
+            AtomicInteger segCount = new AtomicInteger(1);
             EventIteratorFactory currentFactory = readerSegments.first();
             Iterator<EventAccessor> current = currentFactory.newIterator();
+
             @Override
             public boolean hasNext() {
                 if (current.hasNext()) return true;
                 currentFactory = readerSegments.higher(currentFactory);
                 if (currentFactory != null){
                     current = currentFactory.newIterator();
+                    segCount.incrementAndGet();
                     return hasNext();
                 }else{
+                    //log.info("Traversed segments: {}",segCount.get());
                     return false;
                 }
             }

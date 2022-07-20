@@ -34,8 +34,8 @@ public class ConcurrentSegmentTest {
         SegmentManager manager = new SegmentManager(Path.of("segments"),Path.of("wals"));
         AtomicInteger added = new AtomicInteger(0);
 
-        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(50);
-        IntStream.range(0,50).forEach(i -> {
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(5);
+        IntStream.range(0,5).forEach(i -> {
             scheduler.scheduleWithFixedDelay(() -> {
                 try {
                     AtomicInteger counter = new AtomicInteger();
@@ -51,7 +51,7 @@ public class ConcurrentSegmentTest {
         });
 
 
-        IntStream.range(0, 10000000)
+        IntStream.range(0, 1000000)
                 .forEach(i -> {
                     try {
                         long id = Sequencer.SHARED.tick();
