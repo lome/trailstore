@@ -8,7 +8,6 @@ import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.model.Event;
-import org.lome.trailstore.storage.chunks.*;
 import org.lome.trailstore.storage.mvwal.MvWal;
 import org.lome.trailstore.storage.utils.FsWatcher;
 import org.lome.trailstore.utils.Sequencer;

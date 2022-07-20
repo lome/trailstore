@@ -3,8 +3,6 @@ package segment;
 import org.junit.jupiter.api.Test;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.model.Event;
-import org.lome.trailstore.storage.chunks.ChunkClosedException;
-import org.lome.trailstore.storage.chunks.ChunkManager;
 import org.lome.trailstore.storage.segment.SegmentManager;
 import org.lome.trailstore.utils.Sequencer;
 import org.slf4j.Logger;
@@ -27,7 +25,7 @@ public class ConcurrentSegmentTest {
     final static Logger log = LoggerFactory.getLogger(ConcurrentSegmentTest.class);
 
     @Test
-    public void concurrent() throws IOException, ChunkClosedException {
+    public void concurrent() throws IOException {
         clear(Path.of("segments"));
         clear(Path.of("wals"));
 

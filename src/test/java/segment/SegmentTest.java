@@ -3,8 +3,6 @@ package segment;
 import org.junit.jupiter.api.Test;
 import org.lome.trailstore.exceptions.EventAppendException;
 import org.lome.trailstore.model.Event;
-import org.lome.trailstore.storage.chunks.ChunkClosedException;
-import org.lome.trailstore.storage.chunks.ChunkManager;
 import org.lome.trailstore.storage.segment.ArrowMemorySegment;
 import org.lome.trailstore.storage.segment.SegmentManager;
 import org.lome.trailstore.utils.Sequencer;
@@ -22,6 +20,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -53,8 +52,10 @@ public class SegmentTest {
                 "baz".getBytes(StandardCharsets.UTF_8)));
         assertEquals(100, segment.rows());
         AtomicInteger counter = new AtomicInteger();
+        AtomicLong seq = new AtomicLong(0);
         segment.iterator().forEachRemaining(e -> {
             counter.incrementAndGet();
+            assertTrue(seq.getAndSet(e.getId()) < e.getId());
         });
         assertEquals(100, counter.get());
         segment.close();
